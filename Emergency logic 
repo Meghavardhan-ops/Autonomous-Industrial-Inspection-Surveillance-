@@ -1,0 +1,159 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// ================= OLED =================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// ================= MOTOR / LED =================
+#define FL 14
+#define FR 27
+#define RL 26
+#define RR 25
+
+// ================= BUTTONS =================
+#define MODE_BTN      4
+#define EMERGENCY_BTN 18
+#define RESET_BTN     5
+
+// ================= RELAYS =================
+#define RELAY1 23
+#define RELAY2 19
+
+// ================= STATES =================
+bool crawlMode = false;              // false = WALK, true = CRAWL
+bool emergencyLatched = false;
+bool systemArmed = false;
+
+bool lastModeBtn = HIGH;
+unsigned long bootTime;
+
+// ================= SETUP =================
+void setup() {
+  Serial.begin(9600);
+  delay(500);
+  Serial.println("ESP32 SYSTEM BOOTING");
+
+  pinMode(FL, OUTPUT);
+  pinMode(FR, OUTPUT);
+  pinMode(RL, OUTPUT);
+  pinMode(RR, OUTPUT);
+
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  digitalWrite(RELAY1, HIGH);
+  digitalWrite(RELAY2, HIGH);
+
+  pinMode(MODE_BTN, INPUT_PULLUP);
+  pinMode(EMERGENCY_BTN, INPUT_PULLUP);
+  pinMode(RESET_BTN, INPUT_PULLUP);
+
+  Wire.begin(21, 22);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED ERROR");
+    while (1);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 0);
+  display.println("SYSTEM BOOTING");
+  display.println("PLEASE WAIT...");
+  display.display();
+
+  bootTime = millis();
+}
+
+// ================= MOTOR FUNCTIONS =================
+void motorsStop() {
+  digitalWrite(FL, LOW);
+  digitalWrite(FR, LOW);
+  digitalWrite(RL, LOW);
+  digitalWrite(RR, LOW);
+}
+
+void motorsWalk() {
+  digitalWrite(FL, HIGH);
+  digitalWrite(FR, HIGH);
+  digitalWrite(RL, HIGH);
+  digitalWrite(RR, HIGH);
+}
+
+void motorsCrawl() {
+  motorsStop();
+  digitalWrite(FL, HIGH); delay(120);
+  digitalWrite(FR, HIGH); delay(120);
+  digitalWrite(RL, HIGH); delay(120);
+  digitalWrite(RR, HIGH); delay(120);
+}
+
+// ================= LOOP =================
+void loop() {
+
+  // -------- ARM SYSTEM AFTER 3s --------
+  if (!systemArmed && millis() - bootTime > 3000) {
+    systemArmed = true;
+    Serial.println("SYSTEM ARMED");
+  }
+
+  // -------- MODE TOGGLE --------
+  bool currentModeBtn = digitalRead(MODE_BTN);
+  if (lastModeBtn == HIGH && currentModeBtn == LOW && !emergencyLatched) {
+    crawlMode = !crawlMode;
+    Serial.println(crawlMode ? "MODE: CRAWL" : "MODE: WALK");
+    delay(200);
+  }
+  lastModeBtn = currentModeBtn;
+
+  // -------- EMERGENCY READ (DEBOUNCED) --------
+  if (systemArmed && digitalRead(EMERGENCY_BTN) == LOW) {
+    delay(30);
+    if (digitalRead(EMERGENCY_BTN) == LOW) {
+      emergencyLatched = true;
+    }
+  }
+
+  // -------- RESET --------
+  if (emergencyLatched && digitalRead(RESET_BTN) == LOW) {
+    emergencyLatched = false;
+    Serial.println("EMERGENCY RESET");
+    delay(300);
+  }
+
+  // -------- DISPLAY & ACTION --------
+  display.clearDisplay();
+  display.setCursor(0, 0);
+
+  if (emergencyLatched) {
+    motorsStop();
+    digitalWrite(RELAY1, LOW);
+    digitalWrite(RELAY2, LOW);
+
+    display.println("!!! EMERGENCY !!!");
+    display.println("MOTORS STOPPED");
+    display.println("RELAYS ON");
+    display.println(":(");
+
+  } else {
+    digitalWrite(RELAY1, HIGH);
+    digitalWrite(RELAY2, HIGH);
+
+    if (crawlMode) {
+      motorsCrawl();
+      display.println("MODE: CRAWL");
+      display.println("SPEED: LOW");
+      display.println(":|");
+    } else {
+      motorsWalk();
+      display.println("MODE: WALK");
+      display.println("SPEED: NORMAL");
+      display.println(":)");
+    }
+  }
+
+  display.display();
+  delay(200);
+}
